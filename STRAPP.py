@@ -1,12 +1,4 @@
-#!/usr/bin/env python
-# coding: utf-8
 
-# In[ ]:
-
-
-# app.py
-
-```python
 import streamlit as st
 import pandas as pd
 
