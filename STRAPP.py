@@ -1,193 +1,199 @@
-
 import streamlit as st
 import pandas as pd
+import io
+from datetime import datetime
 
-st.set_page_config(page_title="Genetic Risk Classifier", layout="wide")
-
-st.title("🧬 Genetic Risk Classification System")
-st.markdown("Upload an Excel genotype file to classify gene-level and trait-level risk.")
-
-# --------------------------------------------------
-# Risk Classification Functions
-# --------------------------------------------------
-
-def normalize_genotype(gt):
-    """Fix Excel genotype corruption issues"""
-
-    if pd.isna(gt):
-        return gt
-
-    # Convert Excel serial dates back to genotype
-    if gt == 46023 or gt == 46023.0:
-        return "1/1"
-
-    gt = str(gt).strip()
-
-    return gt
-
-
-# --------------------------------------------------
-# Gene-level classification
-# --------------------------------------------------
-
-def classify_gene(genotypes):
-
-    total = len(genotypes)
-
-    high = (genotypes == "1/1").sum()
-    moderate = (genotypes == "0/1").sum()
-    low = (genotypes == "0/0").sum()
-
-    high_pct = high / total
-    risk_pct = (high + moderate) / total
-
-    # High Risk
-    if high_pct >= 0.50:
-        return "High Risk"
-
-    # Moderate Risk
-    elif risk_pct >= 0.50:
-        return "Moderate Risk"
-
-    # Low Risk
-    else:
-        return "Low Risk"
-
-
-# --------------------------------------------------
-# Trait-level classification
-# --------------------------------------------------
-
-def classify_group(subdf):
-
-    total = len(subdf)
-
-    high = (subdf["Status"] == "High Risk").sum()
-    moderate = (subdf["Status"] == "Moderate Risk").sum()
-    low = (subdf["Status"] == "Low Risk").sum()
-
-    high_pct = high / total
-    risk_pct = (high + moderate) / total
-
-    # High Risk
-    if high_pct >= 0.75:
-        return "High Risk"
-
-    # Moderate Risk
-    elif risk_pct >= 0.50:
-        return "Moderate Risk"
-
-    # Low Risk
-    else:
-        return "Low Risk"
-
-
-# --------------------------------------------------
-# File Upload
-# --------------------------------------------------
-
-uploaded_file = st.file_uploader(
-    "Upload Excel File",
-    type=["xlsx"]
+# ====================== PAGE CONFIG ======================
+st.set_page_config(
+    page_title="Genome Risk Analyzer",
+    page_icon="🧬",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-if uploaded_file is not None:
+# ====================== CUSTOM CSS ======================
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #1E3A8A;
+        text-align: center;
+        margin-bottom: 1rem;
+    }
+    .sub-header {
+        font-size: 1.5rem;
+        color: #3B82F6;
+        margin-top: 1.5rem;
+    }
+    .metric-card {
+        background-color: #F8FAFC;
+        padding: 1rem;
+        border-radius: 10px;
+        border: 1px solid #E2E8F0;
+    }
+    .high-risk { color: #EF4444; font-weight: bold; }
+    .moderate-risk { color: #F59E0B; font-weight: bold; }
+    .low-risk { color: #10B981; font-weight: bold; }
+</style>
+""", unsafe_allow_html=True)
 
-    try:
-        # Read Excel
-        df = pd.read_excel(uploaded_file, engine="openpyxl")
+# ====================== TITLE ======================
+st.markdown('<h1 class="main-header">🧬 Genome Risk Analyzer</h1>', unsafe_allow_html=True)
+st.markdown("**Professional Risk Classification Dashboard** | Gene & Trait Level Analysis")
 
-        st.success("✅ File loaded successfully")
+# ====================== SIDEBAR ======================
+st.sidebar.header("📤 Data Upload")
+uploaded_file = st.sidebar.file_uploader(
+    "Upload your Genome Risk Excel file",
+    type=["xlsx", "xls"],
+    help="File must contain columns: 'Gene Name', 'genotype', 'Traits'"
+)
 
-        st.subheader("Preview of Uploaded Data")
-        st.dataframe(df.head())
+st.sidebar.markdown("---")
+st.sidebar.markdown("### ⚙️ Analysis Parameters")
+high_gene_threshold = st.sidebar.slider("High Risk Gene Threshold (%)", 30, 70, 50)
+moderate_trait_threshold = st.sidebar.slider("Moderate Risk Trait Threshold (%)", 30, 70, 50)
+high_trait_threshold = st.sidebar.slider("High Risk Trait Threshold (%)", 60, 90, 75)
 
-        # --------------------------------------------------
-        # Normalize genotype column
-        # --------------------------------------------------
+# ====================== MAIN APP ======================
+if uploaded_file is None:
+    st.info("👆 Please upload your Excel file in the sidebar to begin analysis.")
+    st.stop()
 
-        df["genotype"] = df["genotype"].apply(normalize_genotype)
+# --------------------- LOAD DATA ---------------------
+@st.cache_data
+def load_data(file):
+    return pd.read_excel(file, engine='openpyxl')
 
-        st.subheader("Unique Genotypes Detected")
-        st.write(df["genotype"].unique())
+try:
+    df = load_data(uploaded_file)
+except Exception as e:
+    st.error(f"Error loading file: {e}")
+    st.stop()
 
-        # --------------------------------------------------
-        # Gene-level classification
-        # --------------------------------------------------
+# --------------------- CORE FUNCTIONS ---------------------
+def classify_gene(genotypes, high_threshold=0.50):
+    total = len(genotypes)
+    high = (genotypes == 46023).sum()
+    moderate = (genotypes == "0/1").sum()
+    high_pct = high / total
+    risk_pct = (high + moderate) / total
+    
+    if high_pct >= high_threshold:
+        return "High Risk"
+    elif risk_pct >= 0.50:
+        return "Moderate Risk"
+    else:
+        return "Low Risk"
 
-        gene_status = (
-            df.groupby("Gene Name")["genotype"]
-            .apply(classify_gene)
-            .reset_index(name="Status")
-        )
+def classify_group(subdf, high_t=0.75, risk_t=0.50):
+    total = len(subdf)
+    high = (subdf["Status"] == "High Risk").sum()
+    moderate = (subdf["Status"] == "Moderate Risk").sum()
+    high_pct = high / total
+    risk_pct = (high + moderate) / total
+    
+    if high_pct >= high_t:
+        return "High Risk"
+    elif risk_pct >= risk_t:
+        return "Moderate Risk"
+    else:
+        return "Low Risk"
 
-        # Merge back
-        df = df.merge(gene_status, on="Gene Name", how="left")
+# --------------------- PROCESSING ---------------------
+with st.spinner("🔬 Analyzing genome data..."):
+    # Step 1: Gene Level Status
+    gene_status = (
+        df.groupby("Gene Name")["genotype"]
+        .apply(lambda x: classify_gene(x, high_gene_threshold/100))
+        .reset_index(name="Status")
+    )
+    
+    # Merge back
+    df = df.merge(gene_status, on="Gene Name", how="left")
+    
+    # Step 2: Trait Level Status
+    trait_status = (
+        df.groupby("Traits")
+        .apply(lambda x: classify_group(x, high_trait_threshold/100, moderate_trait_threshold/100))
+        .reset_index(name="Overall_Status")
+    )
+    
+    # Final merge
+    df = df.merge(trait_status, on="Traits", how="left")
 
-        st.subheader("Gene-Level Risk Classification")
-        st.dataframe(gene_status.head(20))
+# ====================== DASHBOARD ======================
+col1, col2, col3 = st.columns(3)
 
-        # --------------------------------------------------
-        # Trait-level classification
-        # --------------------------------------------------
+with col1:
+    st.metric("Total Genes", len(df["Gene Name"].unique()))
+with col2:
+    st.metric("Total Traits", len(df["Traits"].unique()))
+with col3:
+    st.metric("Total Variants", len(df))
 
-        trait_status = (
-            df.groupby("Traits")
-            .apply(classify_group)
-            .reset_index(name="Overall_Status")
-        )
+st.markdown("---")
 
-        # Merge back
-        df = df.merge(trait_status, on="Traits", how="left")
+# --------------------- SUMMARY TABLES ---------------------
+tab1, tab2, tab3 = st.tabs(["📊 Gene Risk Overview", "📋 Trait Risk Overview", "🔍 Raw Data"])
 
-        st.subheader("Trait-Level Risk Classification")
-        st.dataframe(trait_status.head(20))
+with tab1:
+    st.subheader("Gene-Level Risk Classification")
+    gene_summary = gene_status["Status"].value_counts().reset_index()
+    gene_summary.columns = ["Risk Level", "Count"]
+    gene_summary["Percentage"] = (gene_summary["Count"] / gene_summary["Count"].sum() * 100).round(1)
+    
+    col_a, col_b = st.columns([3, 2])
+    with col_a:
+        st.dataframe(gene_summary, use_container_width=True, hide_index=True)
+    with col_b:
+        st.bar_chart(gene_summary.set_index("Risk Level")["Count"], color="#3B82F6")
 
-        # --------------------------------------------------
-        # Summary Metrics
-        # --------------------------------------------------
+with tab2:
+    st.subheader("Trait-Level Overall Risk")
+    trait_display = trait_status.copy()
+    trait_display = trait_display.merge(
+        df.groupby("Traits").size().reset_index(name="Variant Count"), 
+        on="Traits"
+    )
+    st.dataframe(trait_display, use_container_width=True, hide_index=True)
 
-        st.subheader("📊 Summary Statistics")
+with tab3:
+    st.subheader("Processed Data Preview")
+    st.dataframe(df[["Gene Name", "genotype", "Status", "Traits", "Overall_Status"]].head(50), 
+                 use_container_width=True)
 
-        col1, col2, col3 = st.columns(3)
+# --------------------- DOWNLOADS ---------------------
+st.markdown("### 📥 Download Results")
 
-        with col1:
-            st.metric("Total Variants", len(df))
+col_dl1, col_dl2 = st.columns(2)
 
-        with col2:
-            st.metric("Total Genes", df["Gene Name"].nunique())
+# Prepare files
+full_output = io.BytesIO()
+df.to_excel(full_output, index=False)
+full_output.seek(0)
 
-        with col3:
-            st.metric("Total Traits", df["Traits"].nunique())
+trait_output = io.BytesIO()
+trait_status.to_excel(trait_output, index=False)
+trait_output.seek(0)
 
-        # --------------------------------------------------
-        # Download Outputs (2 Excel Files)
-        # --------------------------------------------------
+with col_dl1:
+    st.download_button(
+        label="📊 Download Full Processed Data",
+        data=full_output,
+        file_name=f"risk_filled_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
 
-        output_excel = "risk_filled_output.xlsx"
-        trait_excel = "trait_summary_output.xlsx"
+with col_dl2:
+    st.download_button(
+        label="📋 Download Trait Summary",
+        data=trait_output,
+        file_name=f"TRAIT_RISK_SUMMARY_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
 
-        df.to_excel(output_excel, index=False)
-        trait_status.to_excel(trait_excel, index=False)
-
-        with open(output_excel, "rb") as f:
-            st.download_button(
-                label="⬇ Download Full Risk Report",
-                data=f,
-                file_name=output_excel,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-        with open(trait_excel, "rb") as f:
-            st.download_button(
-                label="⬇ Download Trait Summary",
-                data=f,
-                file_name=trait_excel,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-        st.success("✅ Risk classification completed successfully")
-
-    except Exception as e:
-        st.error(f"❌ Error: {e}")
-
+# Footer
+st.caption("Genome Risk Analyzer • Built with Streamlit • Professional Dashboard")
